@@ -625,40 +625,6 @@ class RayDAPOTrainer(RayPPOTrainer):
         batch_size:   总的样本数（会按 _distribute_batch_size 均分到这些 problem 上）
         train_configs: dict[problem_name -> train_config]
         """
-        # fixed_sample_names= [
-        #     "p02832 AtCoder Beginner Contest 148 - Brick Break",
-        #     "p03021 AtCoder Grand Contest 034 - Complete Compress",
-        #     "p03512 Code Festival Team Relay (Parallel) - Akashic Records",
-        #     "p02464 Set Intersection",
-        #     "1219_H. Function Composition",
-        #     "p02435 Stack",
-        #     "p01410 Dangerous Tower",
-        #     "1299_C. Water Balance",
-        #     "285_C. Building Permutation",
-        #     "315_E. Sereja and Subsequences",
-        #     "1362_E. Johnny and Grandmaster",
-        #     "p03530 CODE FESTIVAL 2017 Final - Poor Penguin",
-        #     "1025_C. Plasticine zebra",
-        #     "1003_F. Abbreviation",
-        #     "1113_B. Sasha and Magnetic Machines",
-        #     "1340_C. Nastya and Unexpected Guest",
-        #     "1399_B. Gifts Fixing",
-        #     "1490_G. Old Floppy Drive ",
-        #     "525_A. Vitaliy and Pie",
-        #     "p03718 AtCoder Regular Contest 074 - Lotus Leaves",
-        #     "278_A. Circle Line",
-        #     "1223_D. Sequence Sorting",
-        #     "830_B. Cards Sorting",
-        #     "p01735 Optimal alpha beta pruning",
-        #     "207_B3. Military Trainings",
-        #     "608_D. Zuma",
-        #     "p01075 One-Time Path",
-        #     "1067_E. Random Forest Rank",
-        #     "933_A. A Twisty Movement",
-        #     "686_A. Free Ice Cream",
-        #     "p03190 AtCoder Grand Contest 030 - Less than 3",
-        #     "158_D. Ice Sculptures",
-        # ]
 
         if fixed_sample_names != None:
             fixed_sample_items = [(name, train_configs[name]) for name in fixed_sample_names]
