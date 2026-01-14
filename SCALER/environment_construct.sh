@@ -5,12 +5,12 @@ set -euo pipefail
 SANDBOX_URL="http://localhost:8080/run_code"
 # Loading Args
 MAX_ROWS=-1
-LOAD_DIR="../SCALER_data/CodeContest"
+LOAD_DIR=".._data/CodeContest"
 LOAD_TYPE="parquet"
 FILE_GLOB="train-*.parquet"
 GENERATOR_FILE_GLOB="SCALER_with_generator_after_filter.jsonl"
 # Save Args
-SAVE_DIR="../SCALER_data/train"
+SAVE_DIR=".._data/train"
 FILTER_PROBLEM_SAVE_NAME="SCALER_after_filter.jsonl"
 FILTER_PROBLEM_META_NAME="SCALER_after_filter.json"
 GENERATOR_SAVE_NAME="SCALER_with_generator_after_filter.jsonl"
@@ -39,7 +39,7 @@ MAX_OUTPUT_RATE=0.3
 
 # Train args
 MAX_PROMPT_LENGTH=2048
-TRAIN_MODEL_PATH="../models/Qwen/Qwen3-4B"
+TRAIN_MODEL_PATH="../modelss/Qwen/Qwen3-4B"
 BATCH_SIZE=512
 
 DIFFERENT_OUTPUT_LIMIT=10

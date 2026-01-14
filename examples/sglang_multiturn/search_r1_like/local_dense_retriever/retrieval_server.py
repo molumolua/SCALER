@@ -297,7 +297,7 @@ class Config:
         dataset_path: str = "./data",
         data_split: str = "train",
         faiss_gpu: bool = True,
-        retrieval_model_path: str = "./model",
+        retrieval_model_path: str = "./models",
         retrieval_pooling_method: str = "mean",
         retrieval_query_max_length: int = 256,
         retrieval_use_fp16: bool = False,

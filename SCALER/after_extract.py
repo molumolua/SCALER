@@ -844,4 +844,4 @@ if __name__ == "__main__":
         
 if __name__ == "__main__":
     logger = setup_logger()
-    examples=  load_and_prepare_dataset("/inspire/hdd/global_user/xucaijun-253108120121/Code/FORGE",load_type="json",logger=logger,split="Train",file_glob="with_generator_after_filter.jsonl")
+    examples=  load_and_prepare_dataset("./Code/FORGE",load_type="json",logger=logger,split="Train",file_glob="with_generator_after_filter.jsonl")

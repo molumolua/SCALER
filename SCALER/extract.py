@@ -287,7 +287,7 @@ def get_function_code_from_str(code_str, function_name):
     
 # if __name__ == "__main__":
 #     logger=setup_logger()
-#     dataset = load_and_prepare_dataset("/inspire/hdd/global_user/xucaijun-253108120121/Dataset/hf_datasets/code_contest_upgrade_1",file_glob="output_problems.jsonl",logger=logger,load_type="json")
+#     dataset = load_and_prepare_dataset("./Dataset/hf_datasets/code_contest_upgrade_1",file_glob="output_problems.jsonl",logger=logger,load_type="json")
 #     for item in dataset:
 #         code = extract_last_code_block(item['answer'])
 #         print(code)
