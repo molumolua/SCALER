@@ -12,7 +12,7 @@ Official codebase for **SCALER** (arXiv 2026): a framework for synthesizing **ve
 - This repository is built on top of **verl** (Volcano Engine Reinforcement Learning for LLMs) and follows its environment/runtime conventions.
 
 <p align="center">
-  <img src="figures/rl_example.pdf" width="900" />
+  <img src="figures/rl_example.png" width="900" />
 </p>
 
 
