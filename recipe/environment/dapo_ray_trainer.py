@@ -133,15 +133,12 @@ class RayDAPOTrainer(RayPPOTrainer):
             windows_cover = {k:False for k in self.train_configs.keys()}
         else:
             self.windows_environment = []
-            self.env_queue=deque([])
             
         # load checkpoint before doing anything
         self._load_checkpoint()
         self._load_train_configs()
         self._load_environment_windows()
         
-        if self.global_steps == 0:
-            self.init_env_queue()
 
         # perform validation before training
         # currently, we only support validation using the reward_function.
@@ -551,23 +548,6 @@ class RayDAPOTrainer(RayPPOTrainer):
             self.config.critic.optim.total_training_steps = total_training_steps
     
     
-    def init_env_queue(self):
-        # 1) 训练配置的“全体环境”顺序：默认沿用 dict 插入顺序（更可控）
-        all_names = list(self.train_configs.keys())
-
-        # 2) windows_environment 可能有重复/脏数据：去重并过滤不存在的
-        seen = set()
-        win = []
-        for n in self.windows_environment:
-            if n in self.train_configs and n not in seen:
-                seen.add(n)
-                win.append(n)
-
-        win_set = set(win)
-
-        # 3) 队列构造：非窗口里的在前，窗口里的放后
-        others = [n for n in all_names if n not in win_set]
-        self.env_queue = deque(others + win)
         
     def _distribute_batch_size(self, batch_size, num_groups):
         # 根据batch_size和num_groups，生成一个分配数组，并进行随机调整
@@ -584,16 +564,6 @@ class RayDAPOTrainer(RayPPOTrainer):
         # 返回分配结果
         return batch_distribution
    
-
-    def _pick_from_queue(self) -> str | None:
-        """从队首开始轮转，找到第一个不在 exclude 里的；找到后该元素已经被旋到队尾。"""
-        n = len(self.env_queue)
-        if n == 0:
-            return None
-
-        cand = self.env_queue[0]
-        self.env_queue.rotate(-1)  # cand 被放到队尾（相当于 popleft + append）
-        return cand
 
     def update_environment_windows(self, train_configs):
         for idx, name in enumerate(self.windows_environment):
@@ -841,7 +811,6 @@ class RayDAPOTrainer(RayPPOTrainer):
 
         save_json ={
             "windows_environment":self.windows_environment,
-            "env_queue":list(self.env_queue)
         }
         config_filename = os.path.join(global_step_folder, "environment_windows.json")
         with open(config_filename, 'w') as file:
@@ -893,10 +862,8 @@ class RayDAPOTrainer(RayPPOTrainer):
         
         if isinstance(cfg,dict):
             self.windows_environment = cfg['windows_environment']
-            self.env_queue = deque(cfg['env_queue'])
         else:
             self.windows_environment = cfg
-            self.env_queue = deque([])
             
         print(f"Training environment windows loaded from {config_filename}.")
         print(f"cfg type is {type(cfg)}.")
