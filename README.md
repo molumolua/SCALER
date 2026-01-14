@@ -22,11 +22,12 @@ Official codebase for **SCALER** (arXiv 2026): a framework for **synthesizing ve
   - [Key Results (arXiv v1)](#key-results-arxiv-v1)
   - [Repository Layout](#repository-layout)
   - [Installation](#installation)
-- [(recommended) create env](#recommended-create-env)
-- [conda create -n scaler python=3.10 -y](#conda-create--n-scaler-python310--y)
-- [conda activate scaler](#conda-activate-scaler)
-- [Optional: CUDA / GPU-related dependencies](#optional-cuda--gpu-related-dependencies)
-- [Editable install (if the project is packaged)](#editable-install-if-the-project-is-packaged)
+  - [Reproducing Paper Settings](#reproducing-paper-settings)
+  - [Evaluation](#evaluation)
+  - [Citation](#citation)
+  - [License \& Acknowledgements](#license--acknowledgements)
+  - [Contact](#contact)
+  - [中文简介](#中文简介)
 
 ---
 
@@ -121,3 +122,84 @@ pip install -r requirements-cuda.txt
 
 # Editable install (if the project is packaged)
 pip install -e .
+````
+
+Sanity check:
+
+```bash
+python -c "import verl; print('verl ok')"
+```
+
+---
+
+## Reproducing Paper Settings
+
+The paper’s core RL setup (v1) includes:
+
+* **Active environment set size**: 64 (one prompt per environment per step → 64 prompts/step)
+* **RL algorithm**: GRPO
+* **#responses per prompt**: `n_resp = 8`
+* **Train-time decoding**: `temperature = 1.0`, `top_p = 1.0`
+* **Budgets**: prompt ≤ 4096 tokens, response ≤ 8192 tokens
+* **Curation hyperparams**: `K_slope = 10`, `K_zero = K_sat = 5`
+
+Use `recipe/` as the entry point for training runs and adapt:
+
+* model checkpoint (e.g., Qwen3-1.7B-base / Qwen3-4B-base),
+* environment pool path,
+* cluster/runtime settings (Ray / distributed inference engines, etc.).
+
+---
+
+## Evaluation
+
+Benchmarks (paper v1):
+
+* **AIME24**, **AMC23**, **MATH-500**, **MMLU-Pro**, **BBEH**
+
+Reporting:
+
+* avg@16 for **AIME24 / AMC23 / MMLU-Pro**
+* avg@1 for **MATH-500 / BBEH**
+* default decoding (unless specified): `temperature = 0.6`, `top_p = 0.95`
+
+---
+
+## Citation
+
+If you use SCALER in your research, please cite:
+
+```bibtex
+@article{xu2026scaler,
+  title   = {SCALER: Synthetic Scalable Adaptive Learning Environment for Reasoning},
+  author  = {Xu, Caijun and Xiao, Changyi and Peng, Zhongyuan and Wang, Xinrun and Cao, Yixin},
+  journal = {arXiv preprint arXiv:2601.04809},
+  year    = {2026},
+  doi     = {10.48550/arXiv.2601.04809}
+}
+```
+
+---
+
+## License & Acknowledgements
+
+* This repository is released under the **Apache License 2.0** (see `LICENSE`), consistent with the upstream **verl** codebase.
+* Built on top of **[volcengine/verl](https://github.com/volcengine/verl)**. We thank the verl contributors for the training infrastructure.
+
+---
+
+## Contact
+
+Correspondence (paper): **[cjxu25@m.fudan.edu.cn](mailto:cjxu25@m.fudan.edu.cn)**
+
+---
+
+## 中文简介
+
+**SCALER（Synthetic sCalable Adaptive Learning Environment for Reasoning）**旨在让推理类 RL 训练长期保持“有效监督信号”。它包含两部分：
+
+1. **环境合成管道**：将真实编程题系统化转化为“可验证、可控难度、可无限生成实例”的推理环境（由 testcase generator + oracle/unit tests 提供强 correctness 保证，并对 scale 参数离散化形成难度梯度）。
+2. **多环境自适应 RL 策略**：在单环境内用在线难度控制将采样维持在能力边界附近；在跨环境层面用 curation 机制淘汰学习信号饱和的环境并补充新环境，以保持分布多样性与持续学习。
+
+更多细节请直接参考论文与 `recipe/` 配置脚本。
+
