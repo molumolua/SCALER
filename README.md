@@ -26,16 +26,15 @@ Official codebase for **SCALER** (arXiv 2026): a framework for synthesizing **ve
   - [Core Ideas](#core-ideas)
     - [Scalable Environment Synthesis](#scalable-environment-synthesis)
     - [Adaptive Multi-Environment RL](#adaptive-multi-environment-rl)
+  - [Repository Layout](#repository-layout)
   - [Quickstart](#quickstart)
     - [1) Setup](#1-setup)
     - [2) Construct environments](#2-construct-environments)
     - [3) Train](#3-train)
-  - [Repository Layout](#repository-layout)
   - [Key Results](#key-results)
   - [Citation](#citation)
   - [License \& Acknowledgements](#license--acknowledgements)
   - [Contact](#contact)
-  - [中文简介](#中文简介)
 
 ---
 
@@ -66,6 +65,16 @@ SCALER sustains learning signals at two levels:
 
 ---
 
+## Repository Layout
+
+High-level structure (major directories):
+
+* `SCALER/` — SCALER core code (synthesis, controllers, curation, integration).
+* `SCALER-data/` — environment pools / metadata / released artifacts (if any).
+* `recipe/environment` — runnable training / evaluation recipes (paper entry points).
+* `verl/` — upstream training infrastructure (forked / vendored).
+---
+
 ## Quickstart
 
 ### 1) Setup
@@ -84,7 +93,8 @@ SCALER’s environment synthesis pipeline entry:
 
 Run:
 ```bash
-bash SCALER/environment_construct.sh
+cd SCALER
+bash environment_construct.sh
 ````
 
 Notes:
@@ -109,19 +119,6 @@ Notes:
 
 * This script is the **actual training entry**. It typically sets model, env pool, runtime (GPU / distributed), and logging.
 * If you modify environment pool / difficulty scheduling / curation knobs, do it by editing the recipe script (and/or its referenced config files).
-
----
-
-## Repository Layout
-
-High-level structure (major directories):
-
-* `SCALER/` — SCALER core code (synthesis, controllers, curation, integration).
-* `SCALER-data/` — environment pools / metadata / released artifacts (if any).
-* `recipe/` — runnable training / evaluation recipes (paper entry points).
-* `verl/` — upstream training infrastructure (forked / vendored).
-* `docs/` — documentation + figures + examples (recommended place for README images).
-* `scripts/`, `examples/` — utilities and demos.
 
 ---
 
@@ -168,17 +165,4 @@ If you use SCALER in your research, please cite:
 
 Correspondence (paper): **[cjxu25@m.fudan.edu.cn](mailto:cjxu25@m.fudan.edu.cn)**
 
----
-
-## 中文简介
-
-SCALER（Synthetic sCalable Adaptive Learning Environment for Reasoning）旨在让推理类 RL 训练长期保持“有效监督信号”。核心包括：
-
-1. **环境合成管道**：将真实编程题系统化转化为“可验证、可控难度、可无限生成实例”的推理环境（testcase generator + oracle/unit tests）。
-2. **多环境自适应 RL**：在单环境内做在线难度控制，在跨环境层面做环境集合的动态维护（curation），从而追踪能力边界并保持训练分布多样性。
-
-入口脚本：
-
-* 合成环境：`SCALER/environment_construct.sh`
-* 训练入口：`recipe/environment`
 
