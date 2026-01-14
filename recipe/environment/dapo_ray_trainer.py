@@ -782,7 +782,7 @@ class RayDAPOTrainer(RayPPOTrainer):
                     "problem_name":problem_name,
                     "output_type":train_config.get('output_type','number')
                 },
-                "data_source":"forge",
+                "data_source":"scaler",
                 "problem_name":problem_name,
                 "distance":problem_distance,
                 "index":idx+start_idx,

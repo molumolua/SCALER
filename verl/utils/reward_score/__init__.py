@@ -45,7 +45,7 @@ def default_compute_score(
         from . import gsm8k
 
         res = gsm8k.compute_score(solution_str, ground_truth)
-    # elif data_source.startswith("forge"):
+    # elif data_source.startswith("scaler"):
     #     from . import environment
     #     res = environment.compute_score(solution_str,ground_truth,extra_info['output_type'])
     elif data_source == "deepmath":
@@ -57,7 +57,7 @@ def default_compute_score(
     elif data_source.startswith("nppc"):
         import nppc.validator
         res =  nppc.validator.compute_score(solution_str,extra_info['problem_detail_str'],extra_info['problem_name'],ground_truth)
-    elif data_source.startswith("think") or data_source.startswith("logic") or data_source.startswith("forge"):
+    elif data_source.startswith("think") or data_source.startswith("logic") or data_source.startswith("scaler"):
         from . import think_test_math
         res = think_test_math.compute_score(solution_str, ground_truth)
     elif data_source.startswith("option"):
