@@ -43,7 +43,7 @@ from verl.utils.profiler import marked_timer
 from verl.utils.rollout_skip import RolloutSkip
 
 
-import environment.generate_problem_from_environment
+import SCALER.generate_problem_from_environment
 from omegaconf import OmegaConf, open_dict
 from verl.trainer.ppo.ray_trainer import AdvantageEstimator, RayPPOTrainer,apply_kl_penalty, compute_advantage, compute_response_mask
 from verl.utils.dataset.rl_dataset import RLHFDataset,collate_fn
@@ -706,7 +706,7 @@ class RayDAPOTrainer(RayPPOTrainer):
                 problem_distance = _rand_round_to_int(distance)
 
             
-            problem_description,solution=environment.generate_problem_from_environment.get_problems(train_config,[problem_distance],sandboxfusion_url=self.config.data.sandboxfusion_url,with_instruction=self.config.data.with_instruction)[0]
+            problem_description,solution=SCALER.generate_problem_from_environment.get_problems(train_config,[problem_distance],sandboxfusion_url=self.config.data.sandboxfusion_url,with_instruction=self.config.data.with_instruction)[0]
             
             problems.append({
                 "prompt":get_train_prompt(problem_description),
