@@ -3,7 +3,7 @@ set -euxo pipefail
 export WANDB_MODE=offline
 model_name="Qwen3-1.7B-Base"
 
-num_gpus=8
+num_gpus=4
 tensor_model_parallel_size=2
 
 
@@ -65,7 +65,7 @@ filter_groups_metric=acc
 RAY_DATA_HOME=${RAY_DATA_HOME:-"/inspire/hdd/global_user/xucaijun-253108120121/SCALER"}
 MODEL_PATH=${MODEL_PATH:-"/inspire/hdd/global_user/xucaijun-253108120121/Model/Qwen/${model_name}"}
 CKPTS_DIR=${CKPTS_DIR:-"${RAY_DATA_HOME}/ckpts/${project_name}/${exp_name}"}
-TRAIN_FILE=${TRAIN_FILE:-"${RAY_DATA_HOME}/SCALER-data/train/SCALER-len10.json"}
+TRAIN_FILE=${TRAIN_FILE:-"${RAY_DATA_HOME}/SCALER-data/train/SCALER-2739.json"}
 TEST_FILE=${TEST_FILE:-["${RAY_DATA_HOME}/SCALER-data/test/bbeh_data.parquet","${RAY_DATA_HOME}/SCALER-data/test/think_MATH-500_MATH-500-processed.parquet","${RAY_DATA_HOME}/SCALER-data/test/think_amc23_amc23_test.parquet","${RAY_DATA_HOME}/SCALER-data/test/think_aime24_aime24_test.parquet","${RAY_DATA_HOME}/SCALER-data/test/MMLU-Pro-Valid.parquet","${RAY_DATA_HOME}/SCALER-data/test/GPQA-Diamond-Test.parquet"]}
 
 # Algorithm
@@ -94,7 +94,7 @@ max_num_gen_batches=100
 
 offload=False
 ref_offload=False
-gpu_memory_utilization=0.9
+gpu_memory_utilization=0.7
 actor_ppo_max_token_len=$((2*(max_prompt_length + max_response_length)))
 infer_ppo_max_token_len=$((2*(max_prompt_length + max_response_length)))
 
