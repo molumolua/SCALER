@@ -4,142 +4,6 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Deque, Literal, Tuple, Dict, Optional
 import numpy as np
-@dataclass
-class BetaScheduler:
-    beta: float = 2
-    beta_min: float = 0.5
-    beta_max: float = 5
-    eps: float = 1e-12
-    m: int = 5                                   # 历史窗口长度
-    variant: Literal['bb1','bb2','alt'] = 'bb1'  # 'alt' 表示在 bb1/bb2 间交替
-
-    # 内部状态
-    prev_distance: Optional[float] = None
-    prev_err: Optional[float] = None
-    _hist: Deque[Tuple[float, float]] = None     # 存 (s, y)
-    _alt_flag: int = 0
-
-    def __post_init__(self):
-        if self._hist is None:
-            self._hist = deque(maxlen=self.m)
-
-    def update_beta(self,err,distance) -> float:
-        """
-        需要上一轮的 accuracy 与 distance（或你自己在外部保存），
-        这样本轮就能形成 (s, y) 并入历史窗口。
-        """
-        if self.prev_distance != None and self.prev_err != None:
-
-            s = float(distance) - float(self.prev_distance)
-            y = err - self.prev_err
-            
-            self._push_pair(s, y)
-
-        bb = self._estimate_bb()
-        if bb is None:
-            new_beta = self.beta  # 没法估计时保持原值（也可改为取 beta_min）
-        else:
-            new_beta = max(self.beta_min, min(bb, self.beta_max))
-
-        self.beta = new_beta
-        self.prev_err = err
-        self.prev_distance = distance
-        return new_beta
-
-    def _push_pair(self, s: float, y: float):
-        # 仅在 |y| 足够大、且存在参数移动时记录，避免 0/0
-        if abs(y) > self.eps and abs(s) > self.eps:
-            self._hist.append((s, y))
-
-    def _estimate_bb(self):
-        if not self._hist:
-            return None
-
-        if self.variant == 'alt':
-            use_bb1 = (self._alt_flag % 2 == 0)
-            self._alt_flag += 1
-        else:
-            use_bb1 = (self.variant == 'bb1')
-        if len(self._hist) == self.m:
-            # 聚合：sum over window
-            sum_ss = sum(s*s for s, _ in self._hist)
-            sum_sy = sum(s*y for s, y in self._hist)
-            sum_yy = sum(y*y for _, y in self._hist)
-
-            if use_bb1:
-                # α = sum s^T s / sum s^T y
-                if abs(sum_sy) <= self.eps:
-                    return None
-                return abs(sum_ss / sum_sy)
-            else:
-                # α = sum s^T y / sum y^T y
-                if abs(sum_yy) <= self.eps:
-                    return None
-                return abs(sum_sy / sum_yy)
-        else:
-            return None
-        
-    # ---- JSON 序列化（类内）----
-    _SERDE_TAG = "BetaScheduler-v1"
-
-    def _to_serializable(self) -> dict:
-        """
-        转为 JSON-safe 字典。
-        - _hist(deque) 转成 [[s,y], ...]
-        - 保留运行态 beta 与 _alt_flag
-        """
-        return {
-            "type": self._SERDE_TAG,
-            "params": {
-                "beta": self.beta,
-                "beta_min": self.beta_min,
-                "beta_max": self.beta_max,
-                "eps": self.eps,
-                "m": self.m,
-                "variant": self.variant,
-            },
-            "state": {
-                "hist": [[float(s), float(y)] for (s, y) in (list(self._hist) if self._hist else [])],
-                "alt_flag": int(self._alt_flag),
-                "prev_distance":self.prev_distance,
-                "prev_err":self.prev_err
-            },
-        }
-
-    @classmethod
-    def _from_serializable(cls, payload: dict) -> "BetaScheduler":
-        """
-        从 JSON-safe 字典恢复实例；按 m 恢复 deque(maxlen=m) 并回填历史。
-        """
-        if payload.get("type") != cls._SERDE_TAG:
-            raise ValueError("Unrecognized BetaScheduler payload type")
-
-        params = payload["params"]
-        state = payload.get("state", {})
-
-        obj = cls(
-            beta=params["beta"],
-            beta_min=params["beta_min"],
-            beta_max=params["beta_max"],
-            eps=params["eps"],
-            m=params["m"],
-            variant=params["variant"],
-        )
-
-        # 恢复内部状态
-        obj._hist = deque(maxlen=obj.m)
-        for pair in state.get("hist", []):
-            if isinstance(pair, (list, tuple)) and len(pair) == 2:
-                s, y = float(pair[0]), float(pair[1])
-                # 与 _push_pair 约束一致（也可直接 append 原样数据）
-                if abs(y) > obj.eps and abs(s) > obj.eps:
-                    obj._hist.append((s, y))
-
-        obj._alt_flag = int(state.get("alt_flag", 0))
-        obj.prev_err = state.get("prev_err",None)
-        obj.prev_distance = state.get("prev_distance",None)
-        return obj
-
 
 import math
 import random
@@ -154,7 +18,6 @@ class DifficultyControl:
                  ema_beta = 0.8,           # 目前没用，但保留参数不破坏旧接口
                  state = None,
                  activate_function="linear",
-                 k_updater_name="fixed",
                  # ===== 新增：用于环境筛选的参数 =====
                  history_len=50,           # 记录最近多少个 d
                  slope_scale=0.05,         # 斜率尺度，~slope_scale 时 w_effective 就很高
@@ -194,9 +57,6 @@ class DifficultyControl:
                 "correct_history": []
             } 
         
-        self.k_updater_name = k_updater_name
-        if k_updater_name != "fixed":
-            self.k_updater = BetaScheduler(beta=self.k)
 
     # ================= 基础功能 =================
 
@@ -267,8 +127,7 @@ class DifficultyControl:
 
         # ----------- k update & delta compute -----------
         current_k = self.k
-        if self.k_updater_name != "fixed":
-            current_k = self.k_updater.update_beta(err=err, distance=distance) 
+
         
         raw_delta = current_k * err
         
@@ -596,7 +455,6 @@ class DifficultyControl:
                 "ema_beta": self.ema_beta,
                 "state": {k: v for k, v in self.state.items()},
                 "activate_function": self.activate_function,
-                "k_updater_name": self.k_updater_name,
                 # 新增参数
                 "history_len": self.history_len,
                 "slope_scale": self.slope_scale,
@@ -606,8 +464,7 @@ class DifficultyControl:
                 "beta": self.beta,
             },
         }
-        if self.k_updater_name != "fixed":
-            serializable_object['k_updater'] = self.k_updater._to_serializable()
+
         
         return serializable_object
     
@@ -615,9 +472,6 @@ class DifficultyControl:
     def _from_serializable(cls, payload):
         params = payload["params"]
         obj = cls(**params)
-        if obj.k_updater_name != "fixed" and payload.get("k_updater"):
-            k_updater = BetaScheduler._from_serializable(payload["k_updater"])
-            obj.k_updater = k_updater
         # 兼容老版本：如果没有 history 字段，补一个
         if "distance_history" not in obj.state:
             obj.state["distance_history"] = []
