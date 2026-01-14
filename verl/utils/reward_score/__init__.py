@@ -45,6 +45,24 @@ def default_compute_score(
         from . import gsm8k
 
         res = gsm8k.compute_score(solution_str, ground_truth)
+    # elif data_source.startswith("forge"):
+    #     from . import environment
+    #     res = environment.compute_score(solution_str,ground_truth,extra_info['output_type'])
+    elif data_source == "deepmath":
+        from . import deepmath
+        res = deepmath.reward_func("deepmath",solution_str,ground_truth,extra_info)
+    elif data_source=="bbeh":
+        from . import bbeh
+        res = bbeh.compute_score(solution_str,ground_truth)
+    elif data_source.startswith("nppc"):
+        import nppc.validator
+        res =  nppc.validator.compute_score(solution_str,extra_info['problem_detail_str'],extra_info['problem_name'],ground_truth)
+    elif data_source.startswith("think") or data_source.startswith("logic") or data_source.startswith("forge"):
+        from . import think_test_math
+        res = think_test_math.compute_score(solution_str, ground_truth)
+    elif data_source.startswith("option"):
+        from . import choice_base_problems
+        res = choice_base_problems.compute_score(solution_str,ground_truth)
     elif data_source in ["lighteval/MATH", "DigitalLearningGmbH/MATH-lighteval", "HuggingFaceH4/MATH-500"]:
         from . import math_reward
 
