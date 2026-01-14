@@ -9,7 +9,7 @@
 Official codebase for **SCALER** (arXiv 2026): a framework for synthesizing **verifiable, difficulty-controllable reasoning environments** from real-world programming problems, and training LLMs with **adaptive multi-environment RL** to sustain informative learning signals over long horizons.
 
 - Paper: **SCALER: Synthetic sCalable Adaptive Learning Environment for Reasoning** — https://arxiv.org/abs/2601.04809
-- This repository is built on top of **verl** (Volcano Engine Reinforcement Learning for LLMs) and follows its environment/runtime conventions.
+- This repository is built on top of [**verl**](https://github.com/volcengine/verl) (Volcano Engine Reinforcement Learning for LLMs) and follows its environment/runtime conventions.
 
 <p align="center">
   <img src="figures/rl_example.png" width="900" />
