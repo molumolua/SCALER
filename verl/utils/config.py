@@ -168,11 +168,7 @@ def validate_config(
         )
 
     # Check for reward model micro-batch size conflicts
-    if (
-        config.reward_model.enable
-        and not config.reward_model.use_dynamic_bsz
-        and not config.reward_model.use_reward_loop
-    ):
+    if config.reward_model.enable and not config.reward_model.use_dynamic_bsz:
         check_mutually_exclusive(
             config.reward_model.micro_batch_size, config.reward_model.micro_batch_size_per_gpu, "reward_model"
         )

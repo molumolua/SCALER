@@ -15,6 +15,8 @@
 import importlib
 import logging
 import os
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as get_version
 
 from packaging.version import parse as parse_version
 
@@ -49,30 +51,25 @@ if os.getenv("VERL_USE_MODELSCOPE", "False").lower() == "true":
 
     patch_hub()
 
-
 if is_npu_available:
-    # Workaround for torch-npu's lack of support for creating nested tensors from NPU tensors.
-    #
-    # ```
-    # >>> a, b = torch.arange(3).npu(), torch.arange(5).npu() + 3
-    # >>> nt = torch.nested.nested_tensor([a, b], layout=torch.jagged)
-    # ```
-    # throws "not supported in npu" on Ascend NPU.
-    # See https://github.com/Ascend/pytorch/blob/294cdf5335439b359991cecc042957458a8d38ae/torch_npu/utils/npu_intercept.py#L109
-    # for details.
+    from .models.transformers import npu_patch as npu_patch
 
-    import torch
-
+    package_name = "transformers"
+    required_version_spec = "4.52.4"
     try:
-        if hasattr(torch.nested.nested_tensor, "__wrapped__"):
-            torch.nested.nested_tensor = torch.nested.nested_tensor.__wrapped__
-        if hasattr(torch.nested.as_nested_tensor, "__wrapped__"):
-            torch.nested.as_nested_tensor = torch.nested.as_nested_tensor.__wrapped__
-    except AttributeError:
-        pass
+        installed_version = get_version(package_name)
+        installed = parse_version(installed_version)
+        required = parse_version(required_version_spec)
 
-    # Apply patches about transformers
-    from .models.transformers import npu_patch as npu_patch  # noqa
+        if installed < required:
+            raise ValueError(
+                f"{package_name} version >= {required_version_spec} is required on ASCEND NPU, current version is "
+                f"{installed}."
+            )
+    except PackageNotFoundError as e:
+        raise ImportError(
+            f"package {package_name} is not installed, please run pip install {package_name}=={required_version_spec}"
+        ) from e
 
     # In verl, the driver process aggregates the computation results of workers via Ray.
     # Therefore, after a worker completes its computation job, it will package the output

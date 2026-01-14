@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# VANILLA_MBRIDGE
 try:
     from mbridge import AutoBridge
     from mbridge.utils.post_creation_callbacks import freeze_moe_router, make_value_model

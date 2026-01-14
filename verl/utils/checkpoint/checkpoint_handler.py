@@ -18,12 +18,10 @@
 import logging
 import os
 import re
-from enum import Enum
 
 import torch
 
 import verl.utils.hdfs_io as hdfs_io
-from verl.single_controller import WorkerGroup
 from verl.utils.checkpoint.checkpoint_manager import find_latest_ckpt_path, get_checkpoint_tracker_filename
 from verl.utils.logger import log_with_rank
 from verl.workers.engine import BaseEngine
@@ -40,11 +38,6 @@ logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_SFT_LOGGING_LEVEL", "WARN"))
 
 
-class OrchestrationMode(Enum):
-    SPMD = 0
-    RAY = 1
-
-
 class CheckpointHandler:
     """
     Checkpoint handler handles the path, global_step of a checkpoint folder.
@@ -54,7 +47,7 @@ class CheckpointHandler:
 
     def __init__(
         self,
-        engine: BaseEngine | WorkerGroup,
+        engine: BaseEngine,
         train_dataloader,
         *,
         default_local_dir,
@@ -62,7 +55,6 @@ class CheckpointHandler:
         default_hdfs_dir=None,
         resume_mode="auto",
         resume_from_path=None,
-        mode=OrchestrationMode.SPMD,
     ):
         self.default_local_dir = default_local_dir
         self.max_ckpt_to_keep = max_ckpt_to_keep
@@ -71,18 +63,7 @@ class CheckpointHandler:
         self.resume_from_path = resume_from_path
         self.engine = engine
         self.train_dataloader = train_dataloader
-        self.mode = mode
-
-        if self.mode == OrchestrationMode.SPMD:
-            self.rank = torch.distributed.get_rank()
-            self.is_mp_src_rank_with_outputs = self.engine.is_mp_src_rank_with_outputs()
-            self.dp_rank = self.engine.get_data_parallel_rank()
-        elif self.mode == OrchestrationMode.RAY:
-            self.rank = 0
-            self.is_mp_src_rank_with_outputs = True
-            self.dp_rank = 0
-        else:
-            raise ValueError(f"Unknown {self.mode=}")
+        self.rank = torch.distributed.get_rank()
 
     def save_checkpoint(self, step):
         """Save checkpoint using FSDPCheckpointManager with improved tracking"""
@@ -103,8 +84,8 @@ class CheckpointHandler:
 
         # Save dataloader state. Note that we only save the iterator in the train_dataloader.
         # So it's identical in each dp rank.
-        if self.is_mp_src_rank_with_outputs:
-            dp_rank = self.dp_rank
+        if self.engine.is_mp_src_rank_with_outputs():
+            dp_rank = self.engine.get_data_parallel_rank()
             local_mkdir_safe(local_global_step_folder)
             dataloader_local_path = os.path.join(local_global_step_folder, f"data_{dp_rank}.pt")
 
@@ -127,8 +108,7 @@ class CheckpointHandler:
             hdfs_io.makedirs(self.default_hdfs_dir, exist_ok=True)
             hdfs_io.copy(src=local_global_step_folder, dst=self.default_hdfs_dir, dirs_exist_ok=True)
 
-        if self.mode == OrchestrationMode.SPMD:
-            torch.distributed.barrier()
+        torch.distributed.barrier()
 
     def load_checkpoint(self):
         # Determine resume path based on configuration
@@ -159,7 +139,7 @@ class CheckpointHandler:
 
     def _load_dataloader_state(self, checkpoint_path: str):
         """Load dataloader state from checkpoint"""
-        dp_rank = self.dp_rank
+        dp_rank = self.engine.get_data_parallel_rank()
         dataloader_path = os.path.join(checkpoint_path, f"data_{dp_rank}.pt")
 
         if os.path.exists(dataloader_path):

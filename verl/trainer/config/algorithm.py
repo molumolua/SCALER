@@ -68,8 +68,8 @@ class RolloutCorrectionConfig(BaseConfig):
     3. General off-policy scenarios: Any distribution shift between data collection and training
 
     For more details, see:
-    "When Speed Kills Stability: Demystifying RL Collapse from the Training-Inference Mismatch"
-    https://richardli.xyz/rl-collapse
+    "When Speed Kills Stability: Demystifying RL Collapse from the Inference-Training Mismatch"
+    https://yingru.notion.site/When-Speed-Kills-Stability-271211a558b7808d8b12d403fd15edda
 
     This typed config replaces the old dict-based approach and provides:
     - Type safety and validation
@@ -112,53 +112,30 @@ class RolloutCorrectionConfig(BaseConfig):
             - Typical values: 1e-4 to 1e-6 when enabled
             Default: None (disabled)
 
-        bypass_mode (bool): Operating mode - bypass or decoupled.
-            - True: Bypass mode - reuse rollout_log_prob as old_log_prob (2 policies)
-              Uses compute_policy_loss_bypass_mode() with loss_type selection
-            - False: Decoupled mode - compute old_log_prob separately (3 policies)
-              Uses standard PPO loss with IS weight correction
-            Default: False (decoupled mode)
+        bypass_old_logprob_for_rollout (bool): Skip old_log_prob computation.
+            - True: Reuse rollout_log_prob as old_log_prob (15-20% speedup)
+            - False: Compute old_log_prob via actor.compute_log_prob() (standard)
+            Default: False (standard mode)
 
-        loss_type (str): Loss function type in bypass mode (bypass_mode=True).
-            - "reinforce": REINFORCE-style policy gradient with explicit IS weights
-              L = -E[w * log π(a|s) * A] where w = π_current / π_rollout
-            - "ppo_clip": PPO clipped objective (IS handled by ratio, no explicit weights)
-              L = -E[min(r*A, clip(r)*A)] where r = π_current / π_rollout
-            Default: "ppo_clip"
-
-        rollout_is_batch_normalize (bool): Apply batch normalization to IS weights.
-            - True: Normalize IS weights to have mean=1.0 within each batch
-            - False: Use raw (truncated) IS weights (standard)
-            - Reduces variance by ensuring average weight is 1.0 per batch
-            - Only affects IS weight values, not rejection sampling
-            Default: False (no batch normalization)
+        use_pure_rollout_correction (bool): Use pure policy gradient with IS (no PPO clipping).
+            - Requires bypass_old_logprob_for_rollout=True
+            - True: Pure IS loss without clipping (higher variance, unbiased)
+            - False: PPO loss with IS correction (standard)
+            Default: False (PPO mode)
 
     Example:
         # Create with defaults
         config = RolloutCorrectionConfig()
 
-        # Decoupled PPO mode presets (3 policies: π_rollout, π_old, π_θ)
-        # IS weights correct for gap between π_old and π_rollout
-        config = RolloutCorrectionConfig.decoupled_token_is()  # Token-TIS
-        config = RolloutCorrectionConfig.decoupled_seq_is()  # Seq-TIS
-        config = RolloutCorrectionConfig.decoupled_seq_is_rs()  # Seq-MIS
-        config = RolloutCorrectionConfig.decoupled_geo_rs()  # Geo-RS
-        config = RolloutCorrectionConfig.geo_rs_seq_tis()  # Geo-RS-Seq-TIS
-
-        # Bypass mode presets (2 policies: π_rollout = π_old, π_θ)
-        # loss_type controls the loss function
-        # PPO-clip presets (ratio handles IS, so no separate IS weights needed):
-        config = RolloutCorrectionConfig.bypass_ppo_clip()          # PPO-clip only
-        config = RolloutCorrectionConfig.bypass_ppo_clip_geo_rs()   # PPO-clip + Geo-RS
-        # REINFORCE presets (explicit IS weights):
-        config = RolloutCorrectionConfig.bypass_pg_is()             # REINFORCE + Seq-TIS
-        config = RolloutCorrectionConfig.bypass_pg_rs()             # REINFORCE + Geo-RS
-        config = RolloutCorrectionConfig.bypass_pg_geo_rs_seq_tis() # REINFORCE + Geo-RS + Seq-TIS
+        # Use presets
+        config = RolloutCorrectionConfig.token_is()  # Token-level IS
+        config = RolloutCorrectionConfig.seq_is_rs()  # Sequence-level IS + rejection sampling
+        config = RolloutCorrectionConfig.seq_is()  # Sequence-level IS
 
     Reference:
         Liu, Li, Fu, Wang, Liu, Shen (2025)
-        "When Speed Kills Stability: Demystifying RL Collapse from the Training-Inference Mismatch"
-        https://richardli.xyz/rl-collapse
+        "When Speed Kills Stability: Demystifying RL Collapse from the Inference-Training Mismatch"
+        https://yingru.notion.site/When-Speed-Kills-Stability-271211a558b7808d8b12d403fd15edda
     """
 
     rollout_is: Optional[str] = "sequence"
@@ -167,48 +144,50 @@ class RolloutCorrectionConfig(BaseConfig):
     rollout_rs_threshold: Optional[float] = None
     rollout_rs_threshold_lower: Optional[float] = None
     rollout_token_veto_threshold: Optional[float] = None
-    bypass_mode: bool = False
-    loss_type: str = "ppo_clip"
-    rollout_is_batch_normalize: bool = False
+    bypass_old_logprob_for_rollout: bool = False
+    use_pure_rollout_correction: bool = False
 
     @classmethod
-    def decoupled_token_is(cls, threshold: float = 2.0) -> "RolloutCorrectionConfig":
-        """Decoupled Mode with Token-level Importance Sampling.
+    def token_is(cls, threshold: float = 2.0) -> "RolloutCorrectionConfig":
+        """Token-level Truncated Importance Sampling.
 
-        IS weight correction at token level in decoupled mode (three policies).
+        IS weight correction at token level.
 
         Args:
             threshold (float): Upper threshold for IS weights. Default: 2.0
 
         Returns:
-            RolloutCorrectionConfig configured for decoupled mode with token-level IS
+            RolloutCorrectionConfig configured for token-level IS
         """
         return cls(rollout_is="token", rollout_is_threshold=threshold, rollout_rs=None)
 
     @classmethod
-    def decoupled_seq_is(cls, threshold: float = 2.0) -> "RolloutCorrectionConfig":
-        """Decoupled Mode with Sequence-level Importance Sampling.
+    def token_tis(cls, threshold: float = 2.0) -> "RolloutCorrectionConfig":
+        """Alias for token_is()."""
+        return cls.token_is(threshold=threshold)
 
-        IS weight correction at sequence level in decoupled mode (three policies).
+    @classmethod
+    def seq_is(cls, threshold: float = 2.0) -> "RolloutCorrectionConfig":
+        """Sequence-level Truncated Importance Sampling.
 
         Args:
             threshold (float): Upper threshold for IS weights. Default: 2.0
 
         Returns:
-            RolloutCorrectionConfig configured for decoupled mode with sequence-level IS
+            RolloutCorrectionConfig configured for sequence-level IS
         """
         return cls(rollout_is="sequence", rollout_is_threshold=threshold, rollout_rs=None)
 
     @classmethod
-    def decoupled_seq_is_rs(
+    def seq_is_rs(
         cls,
         is_threshold: float = 2.0,
         rs_threshold: float = 2.0,
         rs_threshold_lower: Optional[float] = None,
     ) -> "RolloutCorrectionConfig":
-        """Decoupled Mode with Sequence-level IS + Rejection Sampling.
+        """Sequence-level IS with Rejection Sampling (MIS).
 
-        Sequence-level IS with sequence-level rejection sampling in decoupled mode.
+        Sequence-level IS with sequence-level rejection sampling.
         Rejects entire sequences based on sequence-level IS weight.
 
         Args:
@@ -218,7 +197,7 @@ class RolloutCorrectionConfig(BaseConfig):
                 If None, auto-computed as reciprocal of rs_threshold. Default: None
 
         Returns:
-            RolloutCorrectionConfig configured for decoupled mode with sequence IS + RS
+            RolloutCorrectionConfig configured for sequence IS + RS
         """
         return cls(
             rollout_is="sequence",
@@ -229,15 +208,24 @@ class RolloutCorrectionConfig(BaseConfig):
         )
 
     @classmethod
-    def decoupled_geo_rs(
+    def seq_mis(cls, threshold: float = 2.0) -> "RolloutCorrectionConfig":
+        """Alias for seq_is_rs()."""
+        return cls.seq_is_rs(
+            is_threshold=threshold,
+            rs_threshold=threshold,
+            rs_threshold_lower=0,
+        )
+
+    @classmethod
+    def geo_rs(
         cls,
         rs_threshold: float = 1.001,
         rs_threshold_lower: Optional[float] = None,
         veto_threshold: float = 1e-4,
     ) -> "RolloutCorrectionConfig":
-        """Decoupled Mode with Geometric Rejection Sampling.
+        """Geometric Rejection Sampling with Veto.
 
-        Uses geometric mean for rejection sampling at sequence level in decoupled mode,
+        Uses geometric mean for rejection sampling at sequence level,
         with additional veto mechanism. Geometric mean is extremely sensitive to outliers,
         requiring very tight thresholds close to 1.0.
 
@@ -248,7 +236,7 @@ class RolloutCorrectionConfig(BaseConfig):
             veto_threshold (float): Per-token veto threshold. Default: 1e-4
 
         Returns:
-            RolloutCorrectionConfig configured for decoupled mode with geometric RS + veto
+            RolloutCorrectionConfig configured for geometric RS with veto
         """
         return cls(
             rollout_is=None,
@@ -259,183 +247,59 @@ class RolloutCorrectionConfig(BaseConfig):
         )
 
     @classmethod
-    def bypass_ppo_clip(cls) -> "RolloutCorrectionConfig":
-        """Bypass mode with PPO-clip loss.
-
-        PPO clipped objective in bypass mode. The PPO ratio = π_θ/π_rollout
-        already handles IS correction, so no explicit IS weights are applied.
-
-        Skips old_log_prob computation for faster execution (2 policies instead of 3).
-
-        Returns:
-            RolloutCorrectionConfig configured for bypass mode with PPO-clip
-        """
-        return cls(
-            rollout_is=None,
-            rollout_rs=None,
-            bypass_mode=True,
-            loss_type="ppo_clip",
-        )
-
-    @classmethod
-    def bypass_ppo_clip_geo_rs(
+    def geo_mis(
         cls,
         rs_threshold: float = 1.001,
-        rs_threshold_lower: Optional[float] = None,
+        rs_threshold_lower: float = 0.999,
         veto_threshold: float = 1e-4,
     ) -> "RolloutCorrectionConfig":
-        """Bypass mode with PPO-clip loss and Geometric Rejection Sampling.
-
-        PPO clipped objective in bypass mode with geometric RS to mask outliers.
-        The PPO ratio = π_θ/π_rollout already handles IS correction.
-
-        Skips old_log_prob computation for faster execution (2 policies instead of 3).
-        Solves the "Length Trap" problem for CoT/agent workloads.
-
-        Args:
-            rs_threshold (float): Geometric RS threshold (upper). Default: 1.001 (±0.1%)
-            rs_threshold_lower (Optional[float]): Geometric RS threshold (lower).
-                If None, auto-computed as reciprocal of rs_threshold. Default: None
-            veto_threshold (float): Per-token veto threshold. Default: 1e-4
-
-        Returns:
-            RolloutCorrectionConfig configured for bypass mode with PPO-clip + Geo-RS
-        """
-        return cls(
-            rollout_is=None,
-            rollout_rs="geometric",
-            rollout_rs_threshold=rs_threshold,
-            rollout_rs_threshold_lower=rs_threshold_lower,
-            rollout_token_veto_threshold=veto_threshold,
-            bypass_mode=True,
-            loss_type="ppo_clip",
+        """Alias for geo_rs()."""
+        return cls.geo_rs(
+            rs_threshold=rs_threshold,
+            rs_threshold_lower=rs_threshold_lower,
+            veto_threshold=veto_threshold,
         )
 
     @classmethod
-    def bypass_pg_is(cls, threshold: float = 2.0) -> "RolloutCorrectionConfig":
-        """Bypass mode with REINFORCE loss and IS Correction.
+    def ppo_is_bypass(cls, threshold: float = 2.0) -> "RolloutCorrectionConfig":
+        """PPO with IS Correction in Bypass Mode.
 
-        Uses REINFORCE loss with explicit IS correction in bypass mode.
+        Skips old_log_prob computation by reusing rollout_log_prob.
+        PPO clips against rollout policy instead of true old policy.
+
+        Args:
+            threshold (float): Upper threshold for IS weights. Default: 2.0
+
+        Returns:
+            RolloutCorrectionConfig configured for PPO_IS bypass mode
+        """
+        return cls(
+            rollout_is="token",
+            rollout_is_threshold=threshold,
+            rollout_rs=None,
+            bypass_old_logprob_for_rollout=True,
+            use_pure_rollout_correction=False,
+        )
+
+    @classmethod
+    def pure_is(cls, threshold: float = 2.0) -> "RolloutCorrectionConfig":
+        """Pure Policy Gradient with IS Correction.
+
+        Uses pure policy gradient loss with explicit IS correction.
         No PPO clipping.
 
         Args:
             threshold (float): Upper threshold for IS weights. Default: 2.0
 
         Returns:
-            RolloutCorrectionConfig configured for bypass mode with REINFORCE + IS
+            RolloutCorrectionConfig configured for pure IS mode
         """
         return cls(
             rollout_is="sequence",
             rollout_is_threshold=threshold,
             rollout_rs=None,
-            bypass_mode=True,
-            loss_type="reinforce",
-        )
-
-    @classmethod
-    def bypass_pg_rs(
-        cls,
-        rs_threshold: float = 1.001,
-        rs_threshold_lower: Optional[float] = None,
-        veto_threshold: float = 1e-4,
-    ) -> "RolloutCorrectionConfig":
-        """Bypass mode with REINFORCE loss and Geometric Rejection Sampling.
-
-        REINFORCE with geometric rejection sampling (no IS weights) in bypass mode.
-        Skips old_log_prob computation for faster execution.
-
-        Solves the "Length Trap" problem where standard IS estimators penalize long sequences.
-        Suitable for reasoning models (CoT) and agents with long action sequences.
-
-        Args:
-            rs_threshold (float): Geometric RS threshold (upper). Default: 1.001 (±0.1%)
-            rs_threshold_lower (Optional[float]): Geometric RS threshold (lower).
-                If None, auto-computed as reciprocal of rs_threshold. Default: None
-            veto_threshold (float): Per-token veto threshold. Default: 1e-4
-
-        Returns:
-            RolloutCorrectionConfig configured for bypass mode with REINFORCE + Geo-RS
-        """
-        return cls(
-            rollout_is=None,
-            rollout_rs="geometric",
-            rollout_rs_threshold=rs_threshold,
-            rollout_rs_threshold_lower=rs_threshold_lower,
-            rollout_token_veto_threshold=veto_threshold,
-            bypass_mode=True,
-            loss_type="reinforce",
-        )
-
-    @classmethod
-    def geo_rs_seq_tis(
-        cls,
-        is_threshold: float = 2.0,
-        rs_threshold: float = 1.001,
-        rs_threshold_lower: Optional[float] = None,
-        veto_threshold: Optional[float] = 1e-4,
-    ) -> "RolloutCorrectionConfig":
-        """Geometric RS with Sequence-level Truncated IS (Geo-RS-Seq-TIS).
-
-        Combines the Geometric Filter (length-invariant validity check) with
-        Clipped Sequence Weight (debiasing).
-
-        Suitable for reasoning models (CoT, o1-style) and agents that need to
-        think for many steps without collapsing.
-
-        Args:
-            is_threshold (float): Upper threshold for sequence IS weights. Default: 2.0
-            rs_threshold (float): Geometric RS threshold (upper). Default: 1.001 (±0.1%)
-            rs_threshold_lower (Optional[float]): Geometric RS threshold (lower).
-                If None, auto-computed as reciprocal of rs_threshold. Default: None
-            veto_threshold (Optional[float]): Per-token veto threshold. Default: 1e-4
-
-        Returns:
-            RolloutCorrectionConfig configured for Geo-RS-Seq-TIS
-        """
-        return cls(
-            rollout_is="sequence",
-            rollout_is_threshold=is_threshold,
-            rollout_rs="geometric",
-            rollout_rs_threshold=rs_threshold,
-            rollout_rs_threshold_lower=rs_threshold_lower,
-            rollout_token_veto_threshold=veto_threshold,
-        )
-
-    @classmethod
-    def bypass_pg_geo_rs_seq_tis(
-        cls,
-        is_threshold: float = 2.0,
-        rs_threshold: float = 1.001,
-        rs_threshold_lower: Optional[float] = None,
-        veto_threshold: Optional[float] = 1e-4,
-    ) -> "RolloutCorrectionConfig":
-        """Bypass mode with REINFORCE loss, Geo-RS, and Sequence-level IS.
-
-        Combines geometric rejection with sequence-level IS
-        in bypass mode with REINFORCE loss (no PPO clipping).
-
-        Suitable for reasoning models (CoT, o1-style) and agents when you want
-        bypass mode efficiency.
-
-        Args:
-            is_threshold (float): Upper threshold for sequence IS weights. Default: 2.0
-            rs_threshold (float): Geometric RS threshold (upper). Default: 1.001 (±0.1%)
-            rs_threshold_lower (Optional[float]): Geometric RS threshold (lower).
-                If None, auto-computed as reciprocal of rs_threshold. Default: None
-            veto_threshold (Optional[float]): Per-token veto threshold. Default: 1e-4
-
-        Returns:
-            RolloutCorrectionConfig configured for bypass mode with REINFORCE + Geo-RS + Seq-TIS
-        """
-        return cls(
-            rollout_is="sequence",
-            rollout_is_threshold=is_threshold,
-            rollout_rs="geometric",
-            rollout_rs_threshold=rs_threshold,
-            rollout_rs_threshold_lower=rs_threshold_lower,
-            rollout_token_veto_threshold=veto_threshold,
-            bypass_mode=True,
-            loss_type="reinforce",
+            bypass_old_logprob_for_rollout=True,
+            use_pure_rollout_correction=True,
         )
 
     @classmethod
@@ -471,13 +335,10 @@ class AlgoConfig(BaseConfig):
             Addresses off-policy issues from policy mismatch, model staleness, and general distribution shifts.
 
             Set to None to disable entirely. Use factory methods for common presets:
-            - RolloutCorrectionConfig.decoupled_token_is() - Decoupled mode with token-level IS
-            - RolloutCorrectionConfig.decoupled_seq_is() - Decoupled mode with sequence-level IS
-            - RolloutCorrectionConfig.decoupled_seq_is_rs() - Decoupled mode with sequence IS + RS
-            - RolloutCorrectionConfig.decoupled_geo_rs() - Decoupled mode with geometric RS + veto
-            - RolloutCorrectionConfig.bypass_ppo_clip() - Bypass mode with PPO-clip
-            - RolloutCorrectionConfig.bypass_pg_is() - Bypass mode with REINFORCE + IS
-            - RolloutCorrectionConfig.bypass_pg_rs() - Bypass mode with REINFORCE + RS
+            - RolloutCorrectionConfig.token_is() - Token-level IS
+            - RolloutCorrectionConfig.seq_is_rs() - Sequence-level IS + rejection sampling
+            - RolloutCorrectionConfig.seq_is() - Sequence-level IS (unbiased estimator)
+            - RolloutCorrectionConfig.geo_rs() - Geometric RS with veto
 
             For backward compatibility, you can still pass a dict, which will be converted to
             RolloutCorrectionConfig automatically.

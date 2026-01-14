@@ -106,20 +106,13 @@ def create_device_mesh(world_size, fsdp_size):
     return device_mesh
 
 
-def get_sharding_strategy(device_mesh, zero3_enable=True):
+def get_sharding_strategy(device_mesh):
     from torch.distributed.fsdp import ShardingStrategy
 
-    if zero3_enable:
-        fsdp_strategy = ShardingStrategy.FULL_SHARD
-        hsdp_strategy = ShardingStrategy.HYBRID_SHARD
-    else:
-        fsdp_strategy = ShardingStrategy.SHARD_GRAD_OP
-        hsdp_strategy = ShardingStrategy._HYBRID_SHARD_ZERO2
-
     if device_mesh.ndim == 1:
-        sharding_strategy = fsdp_strategy
+        sharding_strategy = ShardingStrategy.FULL_SHARD
     elif device_mesh.ndim == 2:
-        sharding_strategy = hsdp_strategy
+        sharding_strategy = ShardingStrategy.HYBRID_SHARD
     else:
         raise NotImplementedError(f"Get device mesh ndim={device_mesh.ndim}, but only support 1 or 2")
     return sharding_strategy
@@ -286,9 +279,6 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         use_liger=False,
         role="actor",
         enable_activation_offload=False,
-        use_prefix_grouper=False,
-        use_tiled_mlp=False,
-        tiled_mlp_shards=4,
     ):
         from torch.distributed.fsdp import CPUOffload, MixedPrecision
         from transformers import (
@@ -303,10 +293,6 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         from verl.utils.torch_dtypes import PrecisionType
 
         assert role in ["actor", "ref"]
-
-        # TiledMLP requires FSDP2 for correct gradient computation
-        if use_tiled_mlp and self.config.actor.strategy == "fsdp":
-            raise ValueError("TiledMLP requires FSDP2. Set `actor_rollout_ref.actor.strategy=fsdp2`.")
 
         log_gpu_memory_usage(f"Before init {role} from HF AutoModel", logger=logger)
         local_path = model_path
@@ -338,15 +324,6 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         # Maybe support Ulysses in VisionAttention in the future and remove this patch
         if self.ulysses_sequence_parallel_size > 1 and hasattr(actor_model_config, "vision_config"):
             actor_model_config.vision_config._attn_implementation = "eager"
-
-        # patch for qwen2.5-vl: when using flash_attention_3, set vision tower to use flash_attention_2
-        # because the vision tower does not support flash_attention_3
-        if (
-            getattr(actor_model_config, "model_type", None) == "qwen2_5_vl"
-            and attn_implementation == "flash_attention_3"
-            and hasattr(actor_model_config, "vision_config")
-        ):
-            actor_model_config.vision_config._attn_implementation = "flash_attention_2"
 
         # patch for kimi-vl
         if getattr(actor_model_config, "model_type", None) == "kimi_vl":
@@ -422,9 +399,6 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
                 ulysses_sp_size=self.ulysses_sequence_parallel_size,
                 use_fused_kernels=use_fused_kernels,
                 fused_kernels_backend=fused_kernels_backend,
-                use_prefix_grouper=use_prefix_grouper,
-                use_tiled_mlp=use_tiled_mlp,
-                tiled_mlp_shards=tiled_mlp_shards,
             )
 
             # some parameters may not in torch_dtype. TODO(zhangchi.usc1992) remove this after we switch to fsdp2
@@ -490,7 +464,7 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
             reduce_dtype = PrecisionType.to_dtype(mixed_precision_config.get("reduce_dtype", "fp32"))
             buffer_dtype = PrecisionType.to_dtype(mixed_precision_config.get("buffer_dtype", "fp32"))
         else:
-            param_dtype = PrecisionType.to_dtype(fsdp_config.dtype)
+            param_dtype = torch.bfloat16
             reduce_dtype = torch.float32
             buffer_dtype = torch.float32
 
@@ -502,17 +476,15 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
             is_lora=self._is_lora,
         )
 
-        # if self._is_rollout and self.config.rollout.name == "hf":
-        #     # TODO(zhangchi.usc1992, shengguangming) fix me.
-        #     Current, auto_wrap_policy causes HFRollout to hang in Gemma
-        #     auto_wrap_policy = None
+        if self._is_rollout and self.config.rollout.name == "hf":
+            # TODO(zhangchi.usc1992, shengguangming) fix me. Current, auto_wrap_policy causes HFRollout to hang in Gemma
+            auto_wrap_policy = None
 
         if self.rank == 0:
             print(f"wrap_policy: {auto_wrap_policy}")
 
         fsdp_mesh = self.device_mesh
-        fsdp_enable_zero3 = fsdp_config.reshard_after_forward
-        sharding_strategy = get_sharding_strategy(fsdp_mesh, fsdp_enable_zero3)
+        sharding_strategy = get_sharding_strategy(fsdp_mesh)
 
         # TODO: add transformer policy
         # We force reference policy to use CPUOffload to save memory.
@@ -625,8 +597,6 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         )
         rollout_name = self.config.rollout.name
 
-        self.rollout_device_mesh = rollout_device_mesh
-
         if rollout_name == "hf":
             self._register_dispatch_collect_info("rollout", dp_rank=self.rank, is_collect=True)
         else:
@@ -672,8 +642,11 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
 
         # 5. switch to trainer mode
         # NOTE: It's critical that hybrid engine in trainer mode initially to load checkpoint.
+        # For sync mode, we directly switch to trainer mode here.
         # For async mode, we can't call run_until_complete here, so we will switch to trainer mode in AgentLoopManager.
-        # Note: sync mode is deprecated and rejected in RolloutConfig.__post_init__
+        if rollout_config.mode == "sync" and self._is_actor:
+            loop = get_event_loop()
+            loop.run_until_complete(self.trainer_mode())
 
     async def rollout_mode(self):
         """Context switch hybridengine to rollout mode."""
@@ -798,11 +771,6 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
                 fsdp_config = FSDPEngineConfig()
 
             local_path = copy_to_local(self.config.model.path, use_shm=use_shm)
-            # TiledMLP configuration for memory-efficient MLP computation
-            tiled_mlp_config = self.config.model.get("tiled_mlp", {})
-            use_tiled_mlp = tiled_mlp_config.get("enabled", False)
-            tiled_mlp_shards = tiled_mlp_config.get("num_shards", 4)
-
             (
                 self.actor_module_fsdp,
                 self.actor_optimizer,
@@ -820,9 +788,6 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
                 use_liger=self.config.model.get("use_liger", False),
                 role="actor",
                 enable_activation_offload=self.config.model.get("enable_activation_offload", False),
-                use_prefix_grouper=self.config.actor.get("use_prefix_grouper", False),
-                use_tiled_mlp=use_tiled_mlp,
-                tiled_mlp_shards=tiled_mlp_shards,
             )
 
             # get the original unwrapped module
@@ -855,15 +820,6 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
             if self.rank == 0:
                 print("reference model:", ref_model_path)
             local_path = copy_to_local(ref_model_path, use_shm=use_shm)
-            use_prefix_grouper = hasattr(self.config, "actor") and self.config.actor.get("use_prefix_grouper", False)
-
-            # TiledMLP for ref model: use ref config if specified, otherwise use actor config
-            ref_tiled_mlp_config = self.config.ref.get("tiled_mlp", None)
-            if ref_tiled_mlp_config is None:
-                ref_tiled_mlp_config = self.config.model.get("tiled_mlp", {})
-            ref_use_tiled_mlp = ref_tiled_mlp_config.get("enabled", False)
-            ref_tiled_mlp_shards = ref_tiled_mlp_config.get("num_shards", 4)
-
             self.ref_module_fsdp = self._build_model_optimizer(
                 model_path=local_path,
                 fsdp_config=omega_conf_to_dataclass(self.config.ref.fsdp_config),
@@ -874,16 +830,11 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
                 trust_remote_code=self.config.model.get("trust_remote_code", False),
                 use_liger=self.config.model.get("use_liger", False),
                 role="ref",
-                use_prefix_grouper=use_prefix_grouper,
-                use_tiled_mlp=ref_use_tiled_mlp,
-                tiled_mlp_shards=ref_tiled_mlp_shards,
             )[0]
             OmegaConf.set_struct(self.config.ref, True)
             with open_dict(self.config.ref):
                 self.config.ref.use_remove_padding = use_remove_padding
                 self.config.ref.use_fused_kernels = use_fused_kernels
-                if use_prefix_grouper:
-                    self.config.ref.use_prefix_grouper = use_prefix_grouper
             self.ref_policy = DataParallelPPOActor(config=self.config.ref, actor_module=self.ref_module_fsdp)
 
         if self._is_actor:
@@ -920,16 +871,13 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
 
         with self.ulysses_sharding_manager:
             data = data.to("cpu")  # data will to device with each micro batch on actor.update_policy
-            data.meta_info.setdefault("pad_token_id", self.tokenizer.pad_token_id)
+
             # perform training
             with Timer(name="update_policy", logger=None) as timer:
                 metrics = self.actor.update_policy(data=data)
             delta_time = timer.last
             global_num_tokens = data.meta_info["global_token_num"]
-            images_seqlens = data.meta_info.get("images_seqlens", None)
-            estimated_flops, promised_flops = self.flops_counter.estimate_flops(
-                global_num_tokens, delta_time, images_seqlens=images_seqlens
-            )
+            estimated_flops, promised_flops = self.flops_counter.estimate_flops(global_num_tokens, delta_time)
             metrics["perf/mfu/actor"] = (
                 estimated_flops * self.config.actor.ppo_epochs / promised_flops / self.world_size
             )
@@ -1020,27 +968,16 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         is_lora = data.meta_info.pop("is_lora", False)
         adapter_ctx = self.actor.actor_module.disable_adapter() if is_lora else nullcontext()
         # we should always recompute old_log_probs when it is HybridEngine
-        config_source = self.config.ref if is_lora else self.config.rollout
-        data.meta_info["micro_batch_size"] = config_source.log_prob_micro_batch_size_per_gpu
-        data.meta_info["max_token_len"] = config_source.log_prob_max_token_len_per_gpu
-        data.meta_info["use_dynamic_bsz"] = config_source.log_prob_use_dynamic_bsz
+        data.meta_info["micro_batch_size"] = self.config.rollout.log_prob_micro_batch_size_per_gpu
+        data.meta_info["max_token_len"] = self.config.rollout.log_prob_max_token_len_per_gpu
+        data.meta_info["use_dynamic_bsz"] = self.config.rollout.log_prob_use_dynamic_bsz
         data.meta_info["temperature"] = self.config.rollout.temperature
-        data.meta_info.setdefault("pad_token_id", self.tokenizer.pad_token_id)
         # perform recompute log_prob
-        calculate_entropy = not is_lora
         with self.ulysses_sharding_manager:
             with adapter_ctx:
-                outputs = self.actor.compute_log_prob(data=data, calculate_entropy=calculate_entropy)
-            if not is_lora:
-                tensors = {"old_log_probs": outputs["log_probs"]}
-            else:
-                tensors = {"ref_log_prob": outputs["log_probs"]}
-            if calculate_entropy:
-                tensors["entropys"] = outputs["entropys"]
-            if "sum_pi_squared" in outputs:
-                tensors["sum_pi_squared"] = outputs["sum_pi_squared"]
+                output, entropys = self.actor.compute_log_prob(data=data, calculate_entropy=True)
             output = DataProto.from_dict(
-                tensors=tensors,
+                tensors={"old_log_probs": output, "entropys": entropys},
                 meta_info={"temperature": self.config.rollout.temperature},
             )
 
@@ -1063,7 +1000,10 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         if self._is_lora:
             # if _is_lora, actor without lora applied is the ref
             data.meta_info["is_lora"] = True
-            return self.compute_log_prob(data)
+            data = self.compute_log_prob(data)
+            # this old_log_probs is in fact ref_log_prob
+            data = DataProto.from_dict(tensors={"ref_log_prob": data.batch["old_log_probs"]})
+            return data
         assert self._is_ref
         # else:
         # otherwise, the class have a standalone ref model
@@ -1073,11 +1013,10 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         data.meta_info["temperature"] = self.config.rollout.temperature
         data.meta_info["max_token_len"] = self.config.ref.log_prob_max_token_len_per_gpu
         data.meta_info["use_dynamic_bsz"] = self.config.ref.log_prob_use_dynamic_bsz
-        data.meta_info.setdefault("pad_token_id", self.tokenizer.pad_token_id)
         with self.ulysses_sharding_manager:
             data = data.to("cpu")  # data will to device with each micro batch on ref.compute_log_prob
-            outputs = self.ref_policy.compute_log_prob(data=data, calculate_entropy=False)
-            output = DataProto.from_dict(tensors={"ref_log_prob": outputs["log_probs"]})
+            output, _ = self.ref_policy.compute_log_prob(data=data, calculate_entropy=False)
+            output = DataProto.from_dict(tensors={"ref_log_prob": output})
 
         output = output.to("cpu")
 
@@ -1334,15 +1273,6 @@ class CriticWorker(Worker, DistProfilerExtension):
             use_meta_tensor=not critic_model_config.tie_word_embeddings, mesh=self.device_mesh
         )
 
-        # TiledMLP configuration for memory-efficient MLP computation
-        tiled_mlp_config = config.model.get("tiled_mlp", {})
-        use_tiled_mlp = tiled_mlp_config.get("enabled", False)
-        tiled_mlp_shards = tiled_mlp_config.get("num_shards", 4)
-
-        # TiledMLP requires FSDP2 for correct gradient computation
-        if use_tiled_mlp and config.strategy == "fsdp":
-            raise ValueError("TiledMLP requires FSDP2. Set `critic.strategy=fsdp2`.")
-
         with init_context(), warnings.catch_warnings():
             warnings.simplefilter("ignore")
             critic_model_config.classifier_dropout = 0.0
@@ -1362,8 +1292,6 @@ class CriticWorker(Worker, DistProfilerExtension):
                 model=critic_module,
                 use_remove_padding=use_remove_padding,
                 ulysses_sp_size=self.ulysses_sequence_parallel_size,
-                use_tiled_mlp=use_tiled_mlp,
-                tiled_mlp_shards=tiled_mlp_shards,
             )
 
             # some parameters may not in torch_dtype
@@ -1389,15 +1317,13 @@ class CriticWorker(Worker, DistProfilerExtension):
                 critic_module = PeftModel.from_pretrained(critic_module, local_adapter_path, is_trainable=True)
                 peft_config = critic_module.peft_config["default"]
                 # Ensure task_type is TaskType enum, not string
-                # Use TOKEN_CLS for Critic since it's loaded as AutoModelForTokenClassification
                 if isinstance(peft_config.task_type, str):
-                    peft_config.task_type = TaskType.TOKEN_CLS
+                    peft_config.task_type = TaskType.CAUSAL_LM
 
             else:
                 # Convert config to regular Python types before creating PEFT model
-                # Use TOKEN_CLS for Critic since it's loaded as AutoModelForTokenClassification
                 lora_config = {
-                    "task_type": TaskType.TOKEN_CLS,
+                    "task_type": TaskType.CAUSAL_LM,
                     "r": self.config.model.lora_rank,
                     "lora_alpha": self.config.model.lora_alpha,
                     "target_modules": convert_to_regular_types(self.config.model.target_modules),
@@ -1557,7 +1483,7 @@ class CriticWorker(Worker, DistProfilerExtension):
         )
 
     @register(dispatch_mode=make_nd_compute_dataproto_dispatch_fn(mesh_name="critic"))
-    @DistProfiler.annotate(color="cyan", role="compute_values")
+    @DistProfiler.annotate(color="cyan")
     def compute_values(self, data: DataProto):
         if self._is_offload_param:
             load_fsdp_model_to_gpu(self.critic_module)
@@ -1577,7 +1503,7 @@ class CriticWorker(Worker, DistProfilerExtension):
         return output
 
     @register(dispatch_mode=make_nd_compute_dataproto_dispatch_fn(mesh_name="critic"))
-    @DistProfiler.annotate(color="pink", role="critic_update")
+    @DistProfiler.annotate(color="pink")
     def update_critic(self, data: DataProto):
         if self._is_offload_param:
             load_fsdp_model_to_gpu(self.critic_module)
@@ -1728,12 +1654,7 @@ class RewardModelWorker(Worker, DistProfilerExtension):
             self.tokenizer = hf_tokenizer(local_path, trust_remote_code=config.model.get("trust_remote_code", False))
 
         trust_remote_code = config.model.get("trust_remote_code", False)
-        override_config = OmegaConf.to_container(OmegaConf.create(config.model.get("override_config", {})))
-        model_config = AutoConfig.from_pretrained(
-            local_path,
-            trust_remote_code=trust_remote_code,
-            attn_implementation=override_config.get("attn_implementation", "flash_attention_2"),
-        )
+        model_config = AutoConfig.from_pretrained(local_path, trust_remote_code=trust_remote_code)
         model_config.num_labels = 1
 
         # note that we have to create model in fp32. Otherwise, the optimizer is in bf16, which is incorrect
@@ -1748,6 +1669,7 @@ class RewardModelWorker(Worker, DistProfilerExtension):
                 pretrained_model_name_or_path=local_path,
                 config=model_config,
                 torch_dtype=torch.bfloat16,
+                attn_implementation="flash_attention_2",
                 trust_remote_code=trust_remote_code,
             )
 
@@ -1945,7 +1867,7 @@ class RewardModelWorker(Worker, DistProfilerExtension):
         return DataProto.from_dict(rm_inputs)
 
     @register(dispatch_mode=make_nd_compute_dataproto_dispatch_fn(mesh_name="reward"))
-    @DistProfiler.annotate(color="brown", role="compute_rm_score")
+    @DistProfiler.annotate(color="brown")
     def compute_rm_score(self, data: DataProto):
         import itertools
 

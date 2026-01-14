@@ -27,7 +27,6 @@ class NsightToolConfig(BaseConfig):
 
     "True for each task has its own database, False for all tasks in one training step share one database."
     discrete: bool = False
-    name: str = "nsight"
 
     def __post_init__(self) -> None:
         pass
@@ -44,8 +43,6 @@ class TorchProfilerToolConfig(BaseConfig):
 
     step_start: int = -1
     step_end: int = -1
-    manual_save: bool = True
-    name: str = "torch"
 
     def __post_init__(self) -> None:
         """config validation logics go here"""
@@ -64,7 +61,6 @@ class TorchMemoryToolConfig(BaseConfig):
 
     trace_alloc_max_entries: int = 100_000
     stack_depth: int = 32
-    name: str = "torch_memory"
 
     def __post_init__(self) -> None:
         """config validation logics go here"""
@@ -86,12 +82,10 @@ class NPUToolConfig(NsightToolConfig):
     contents: list[str] = field(default_factory=list)
 
     # Collection level, optional values: level_none, level0, level1, level2.
-    level: str = "level0"
+    level: str = "level1"
 
     # Whether to automatically parse the data.
     analysis: bool = False
-
-    name: str = "npu"
 
     def __post_init__(self) -> None:
         """config validation logics go here"""

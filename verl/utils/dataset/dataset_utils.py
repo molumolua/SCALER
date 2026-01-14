@@ -16,7 +16,6 @@
 from enum import Enum
 
 import torch
-from tensordict.tensorclass import NonTensorData
 
 
 class DatasetPadMode(str, Enum):
@@ -61,15 +60,11 @@ class SFTTensorCollator:
 
         final_batch = {}
 
-        tensor_keys = set().union(*(d.keys() for d in batch))
+        tensor_keys = [key for key in batch[0].keys() if isinstance(batch[0][key], torch.Tensor)]
 
         # Handle tensor values by creating a NestedTensor.
         for key in tensor_keys:
-            if isinstance(batch[0][key], torch.Tensor):
-                tensors = [item[key] for item in batch]
-                final_batch[key] = torch.nested.as_nested_tensor(tensors, layout=torch.jagged)
-            else:
-                tensors = [NonTensorData(item.get(key)) for item in batch]
-                final_batch[key] = torch.stack(tensors, dim=0)
+            tensors = [item[key] for item in batch]
+            final_batch[key] = torch.nested.as_nested_tensor(tensors, layout=torch.jagged)
 
         return final_batch

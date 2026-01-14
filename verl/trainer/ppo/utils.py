@@ -35,7 +35,6 @@ class Role(Enum):
     RefPolicy = 4
     RewardModel = 5
     ActorRolloutRef = 6
-    Env = 7
 
     def __str__(self):
         return self._get_role_string()
@@ -70,10 +69,10 @@ class Role(Enum):
 
 
 def need_reference_policy(
-    config: DictConfig,
+    role_worker_mapping: dict[Role, WorkerType],
 ) -> bool:
-    """Given the config, do we need ref policy."""
-    return config.algorithm.use_kl_in_reward or config.actor_rollout_ref.actor.use_kl_loss
+    """Given a role worker mapping, do we need ref policy."""
+    return Role.RefPolicy in role_worker_mapping
 
 
 def need_reward_model(

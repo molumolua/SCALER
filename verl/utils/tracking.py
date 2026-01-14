@@ -23,8 +23,6 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
-import orjson
-
 
 class Tracking:
     """A unified tracking interface for logging experiment data to multiple backends.
@@ -88,17 +86,10 @@ class Tracking:
             MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "sqlite:////tmp/mlruns.db")
             mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 
-            # Some cloud providers like Azure ML or Databricks automatically set MLFLOW_RUN_ID
-            # If set, attach to the existing run instead of creating a new one
-            run_id = os.environ.get("MLFLOW_RUN_ID")
-            if run_id:
-                mlflow.start_run(run_id=run_id)
-            else:
-                # Project_name is actually experiment_name in MLFlow
-                # If experiment does not exist, will create a new experiment
-                experiment = mlflow.set_experiment(project_name)
-                mlflow.start_run(experiment_id=experiment.experiment_id, run_name=experiment_name)
-
+            # Project_name is actually experiment_name in MLFlow
+            # If experiment does not exist, will create a new experiment
+            experiment = mlflow.set_experiment(project_name)
+            mlflow.start_run(experiment_id=experiment.experiment_id, run_name=experiment_name)
             mlflow.log_params(_compute_mlflow_params_from_objects(config))
             self.logger["mlflow"] = _MlflowLoggingAdapter()
 
@@ -245,11 +236,11 @@ class FileLogger:
             os.makedirs(directory, exist_ok=True)
             self.filepath = os.path.join(directory, f"{self.experiment_name}.jsonl")
             print(f"Creating file logger at {self.filepath}")
-        self.fp = open(self.filepath, "wb", buffering=0)
+        self.fp = open(self.filepath, "w")
 
     def log(self, data, step):
         data = {"step": step, "data": data}
-        self.fp.write(orjson.dumps(data, option=orjson.OPT_SERIALIZE_NUMPY) + b"\n")
+        self.fp.write(json.dumps(data) + "\n")
 
     def finish(self):
         self.fp.close()
@@ -287,7 +278,6 @@ class _MlflowLoggingAdapter:
         self._invalid_chars_pattern = re.compile(
             r"[^/\w.\- :]"
         )  # Allowed: slashes, alphanumerics, underscores, periods, dashes, colons, and spaces.
-        self._consecutive_slashes_pattern = re.compile(r"/+")
 
     def log(self, data, step):
         import mlflow
@@ -295,8 +285,6 @@ class _MlflowLoggingAdapter:
         def sanitize_key(key):
             # First replace @ with _at_ for backward compatibility
             sanitized = key.replace("@", "_at_")
-            # Replace consecutive slashes with a single slash (MLflow treats them as file paths)
-            sanitized = self._consecutive_slashes_pattern.sub("/", sanitized)
             # Then replace any other invalid characters with _
             sanitized = self._invalid_chars_pattern.sub("_", sanitized)
             if sanitized != key:
@@ -400,8 +388,7 @@ class ValidationGenerationsLogger:
         new_table.add_data(*row_data)
 
         # Update reference and log
-        if wandb.run is not None:
-            wandb.log({"val/generations": new_table}, step=step)
+        wandb.log({"val/generations": new_table}, step=step)
         self.validation_table = new_table
 
     def log_generations_to_swanlab(self, samples, step):
@@ -423,6 +410,7 @@ class ValidationGenerationsLogger:
         """Log validation generation to mlflow as artifacts"""
         # https://mlflow.org/docs/latest/api_reference/python_api/mlflow.html?highlight=log_artifact#mlflow.log_artifact
 
+        import json
         import tempfile
 
         import mlflow

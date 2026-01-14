@@ -12,6 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .checkpoint_handler import CheckpointHandler, OrchestrationMode
+from .checkpoint_handler import CheckpointHandler
 
-__all__ = ["CheckpointHandler", "OrchestrationMode"]
+__all__ = ["CheckpointHandler"]
